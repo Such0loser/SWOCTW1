@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>حساب مساحة الأشكال</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>حساب مساحة الأشكال غير المنتظمة</h1>
+        <input type="file" id="vectorFile" accept=".ai, .eps">
+        <button id="calculateBtn">حساب المساحة</button>
+
+        <div id="loadingMessage" style="display: none;">جارٍ المعالجة، يرجى الانتظار...</div>
+
+        <div id="result" style="display: none;">
+            <h2>النتائج:</h2>
+            <p>المساحة المحسوبة: <span id="areaResult"></span> سم²</p>
+            <h3>معاينة الصورة المحولة:</h3>
+            <img id="convertedImage" src="#" alt="صورة الشكل المحول" style="max-width: 100%; height: auto;">
+        </div>
+        <p id="errorMessage" style="color: red; display: none;"></p>
+    </div>
+    <script src="style.css"></script>
+</body>
+</html>
