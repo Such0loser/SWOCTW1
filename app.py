@@ -3,12 +3,16 @@ import os
 import subprocess
 import base64
 import io
+import logging # Import logging module for better debugging
 from flask import Flask, request, render_template, jsonify
 from werkzeug.utils import secure_filename # Import secure_filename for security
 from PIL import Image
 
+# Configure logging for better visibility of errors and info messages
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 # CRITICAL FIX: Initialize Flask app correctly
-# 'app' should be Flask(__name__), not Flask(app)
+# '__name__' tells Flask where to find static files and templates
 app = Flask(__name__)
 
 # مسارات للملفات المؤقتة
@@ -18,6 +22,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['CONVERTED_IMAGES_FOLDER'] = CONVERTED_IMAGES_FOLDER
 
 # تأكد من وجود المجلدات عند بدء تشغيل التطبيق
+# exist_ok=True يمنع الخطأ إذا كانت المجلدات موجودة بالفعل
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CONVERTED_IMAGES_FOLDER, exist_ok=True)
 
@@ -68,7 +73,9 @@ def calculate_area():
         filename
     )
     file.save(filepath)
+    app.logger.info("File saved temporarily: %s", filepath)
 
+    # Define paths for the converted image
     converted_image_name = os.path.splitext(
         filename
     )[0] + '.jpg'
@@ -79,26 +86,25 @@ def calculate_area():
 
     try:
         # 4. استخدام ImageMagick لتحويل ملف الفيكتور إلى JPG
-        # -density يحدد الدقة بالبكسل/بوصة (DPI)
-        # -quality يحدد جودة JPG (يمكن تعديلها)
-        # -background white -flatten لضمان خلفية بيضاء ودمج الطبقات
         app.logger.info("Converting %s to %s with DPI %d", filepath, converted_image_path, DPI)
-        subprocess.run(
+        
+        process_result = subprocess.run(
             [
                 'convert',
                 filepath,
-                '-density',
-                str(DPI),
-                '-quality',
-                '90',
-                '-background',
-                'white',
+                '-density', str(DPI),
+                '-quality', '90',
+                '-background', 'white',
                 '-flatten',
                 converted_image_path
             ],
-            check=True, # Raise CalledProcessError if the command returns a non-zero exit code
-            capture_output=True # Capture stdout and stderr
+            check=True,
+            capture_output=True,
+            text=True
         )
+        app.logger.info("ImageMagick stdout: %s", process_result.stdout)
+        if process_result.stderr:
+            app.logger.warning("ImageMagick stderr: %s", process_result.stderr)
         app.logger.info("Conversion successful for %s", filename)
 
         # 5. فتح الصورة المحولة باستخدام Pillow
@@ -106,21 +112,16 @@ def calculate_area():
             converted_image_path
         ).convert(
             'RGB'
-        )   # تأكد من التحويل لـ RGB للتعامل مع الألوان
+        )
 
         # 6. حساب البكسلات السوداء
         black_pixels_count = 0
         width, height = img.size
-
-        # تعريف عتبة اللون الأسود (يمكن تعديلها حسب درجة "الأسود" في ملفاتك)
-        # إذا كان البكسل مظلماً جداً (قريب من الأسود)، اعتبره أسود.
-        # مثلاً، مجموع قيم RGB لا يتجاوز 50 (من 255*3 = 765 كحد أقصى)
         black_threshold_sum = 50
 
         for x in range(width):
             for y in range(height):
                 r, g, b = img.getpixel((x, y))
-                # إذا كان البكسل أسود أو قريباً جداً من الأسود
                 if r + g + b <= black_threshold_sum:
                     black_pixels_count += 1
 
@@ -128,9 +129,8 @@ def calculate_area():
         area_cm2 = black_pixels_count / PIXELS_PER_CM_SQUARED
 
         # 8. إرسال الصورة المحولة كـ Base64 للواجهة الأمامية
-        # هذا يسمح بعرضها مباشرة دون الحاجة لحفظها كملف عام
         buffered = io.BytesIO()
-        img.save(buffered, format="JPEG") # استخدم JPEG للحفاظ على حجم معقول
+        img.save(buffered, format="JPEG")
         img_str = base64.b64encode(
             buffered.getvalue()
         ).decode("utf-8")
@@ -144,9 +144,8 @@ def calculate_area():
         )
 
     except subprocess.CalledProcessError as e:
-        # خطأ من ImageMagick نفسه (مثلاً الملف تالف أو لا يمكن معالجته)
-        error_output = e.stderr.decode(errors='ignore') # Decode with error handling
-        app.logger.error("ImageMagick conversion failed for %s: %s", filename, error_output)
+        error_output = e.stderr.decode(errors='ignore')
+        app.logger.error("ImageMagick conversion failed for %s: %s (stdout: %s)", filename, error_output, e.stdout.decode(errors='ignore'))
         return jsonify(
             {
                 "error":
@@ -155,7 +154,6 @@ def calculate_area():
             }
         ), 500
     except FileNotFoundError:
-        # خطأ إذا لم يتم العثور على أمر 'convert' (ImageMagick)
         app.logger.error(
             "ImageMagick 'convert' command not found. Is it installed and in PATH?"
         )
@@ -166,8 +164,7 @@ def calculate_area():
             }
         ), 500
     except Exception as e:
-        # أي خطأ آخر غير متوقع (مثل مشكلة في Pillow أو حساب المساحة)
-        app.logger.error("An unexpected error occurred during processing %s: %s", filename, str(e))
+        app.logger.error("An unexpected error occurred during processing %s: %s", filename, str(e), exc_info=True)
         return jsonify(
             {
                 "error":
@@ -175,8 +172,6 @@ def calculate_area():
             }
         ), 500
     finally:
-        # 9. تنظيف الملفات المؤقتة
-        # REMOVED REDUNDANT 'converted_image_path' removal
         if os.path.exists(filepath):
             os.remove(filepath)
             app.logger.debug("Deleted temporary input file: %s", filepath)
@@ -185,5 +180,4 @@ def calculate_area():
             app.logger.debug("Deleted temporary converted image: %s", converted_image_path)
 
 if __name__ == '__main__':
-    # لتشغيل التطبيق في وضع التطوير
     app.run(debug=True)
